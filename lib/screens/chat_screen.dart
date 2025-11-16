@@ -677,7 +677,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   inputOptions: InputOptions(
                     inputTextStyle: const TextStyle(fontSize: 16),
                     inputDecoration: InputDecoration(
-                      hintText: 'Type a message or use voice...',
+                      hintText: 'Type a message...',
                       border: InputBorder.none,
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 16,
