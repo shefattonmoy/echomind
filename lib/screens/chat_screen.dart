@@ -1,4 +1,4 @@
-// ignore_for_file: deprecated_member_use
+// ignore_for_file: deprecated_member_use, avoid_print
 
 import 'dart:async';
 import 'dart:convert';
@@ -832,7 +832,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
 
               if (_isLoading)
-                Container(
+                SizedBox(
                   height: 80,
                   child: Center(
                     child: Lottie.asset(
