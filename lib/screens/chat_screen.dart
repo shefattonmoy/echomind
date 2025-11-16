@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:http/http.dart';
 import 'package:dash_chat_2/dash_chat_2.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -29,12 +31,273 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isSpeaking = false;
   final String _ttsEnabledKey = 'tts_enabled';
 
+  late stt.SpeechToText _speech;
+  bool _isListening = false;
+  String _recognizedText = '';
+  bool _speechAvailable = false;
+  final String _speechEnabledKey = 'speech_enabled';
+  bool _speechEnabled = true;
+  bool _permissionGranted = false;
+  Timer? _speechTimeoutTimer;
+
   @override
   void initState() {
     super.initState();
     _loadChatHistory();
     _initTTS();
     _loadTtsPreference();
+    _initSpeech();
+    _loadSpeechPreference();
+  }
+
+  Future<void> _initSpeech() async {
+    try {
+      _speech = stt.SpeechToText();
+
+      bool hasSpeech = await _speech.initialize(
+        onStatus: (status) {
+          print('Speech status: $status');
+          setState(() {
+            if (status == 'done' || status == 'notListening') {
+              _handleSpeechStopped();
+            }
+          });
+        },
+        onError: (error) {
+          print('Speech recognition error: ${error.errorMsg}');
+          setState(() {
+            _isListening = false;
+            _recognizedText = 'Error: ${error.errorMsg}';
+          });
+          _cleanupSpeechTimeout();
+        },
+      );
+
+      if (hasSpeech) {
+        setState(() {
+          _speechAvailable = true;
+        });
+        print('Speech recognition initialized successfully');
+
+        await _checkPermissionStatus();
+      } else {
+        print('Speech recognition not available on this device');
+        setState(() {
+          _speechAvailable = false;
+        });
+      }
+    } catch (e) {
+      print('Error initializing speech recognition: $e');
+      setState(() {
+        _speechAvailable = false;
+      });
+    }
+  }
+
+  void _handleSpeechStopped() {
+    _cleanupSpeechTimeout();
+    if (_isListening) {
+      setState(() {
+        _isListening = false;
+      });
+
+      if (_recognizedText.trim().isNotEmpty &&
+          _recognizedText != 'Listening...' &&
+          !_recognizedText.startsWith('Error:')) {
+        print('Sending recognized text: $_recognizedText');
+        final message = ChatMessage(
+          text: _recognizedText.trim(),
+          user: _currentUser,
+          createdAt: DateTime.now(),
+        );
+        _sendMessageWithContext(message);
+      }
+
+      setState(() {
+        _recognizedText = '';
+      });
+    }
+  }
+
+  void _cleanupSpeechTimeout() {
+    _speechTimeoutTimer?.cancel();
+    _speechTimeoutTimer = null;
+  }
+
+  Future<void> _checkPermissionStatus() async {
+    try {
+      bool? hasPermission = await _speech.hasPermission;
+      print('Speech permission status: $hasPermission');
+
+      setState(() {
+        _permissionGranted = hasPermission;
+      });
+
+      if (!_permissionGranted) {
+        print(
+          'Microphone permission not granted - will request when user tries to speak',
+        );
+      }
+    } catch (e) {
+      print('Error checking permission status: $e');
+    }
+  }
+
+  Future<void> _requestPermission() async {
+    try {
+      print('Requesting microphone permission...');
+
+      bool? hasPermission = await _speech.hasPermission;
+      if (hasPermission == false || !hasPermission) {
+        bool success = await _speech.listen(
+          onResult: (result) {},
+          listenOptions: stt.SpeechListenOptions(partialResults: false),
+        );
+
+        if (success) {
+          await _speech.stop();
+        }
+
+        await Future.delayed(Duration(seconds: 1));
+        await _checkPermissionStatus();
+      }
+    } catch (e) {
+      print('Error requesting permission: $e');
+    }
+  }
+
+  Future<void> _loadSpeechPreference() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      setState(() {
+        _speechEnabled = prefs.getBool(_speechEnabledKey) ?? true;
+      });
+    } catch (e) {
+      print('Error loading speech preference: $e');
+    }
+  }
+
+  Future<void> _saveSpeechPreference() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_speechEnabledKey, _speechEnabled);
+    } catch (e) {
+      print('Error saving speech preference: $e');
+    }
+  }
+
+  Future<void> _toggleSpeech() async {
+    setState(() {
+      _speechEnabled = !_speechEnabled;
+    });
+    await _saveSpeechPreference();
+
+    if (!_speechEnabled && _isListening) {
+      await _stopListening();
+    }
+  }
+
+  Future<void> _startListening() async {
+    if (!_speechAvailable || !_speechEnabled || _isListening) {
+      print(
+        'Cannot start listening: available=$_speechAvailable, enabled=$_speechEnabled, listening=$_isListening',
+      );
+      return;
+    }
+
+    bool? hasPermission = await _speech.hasPermission;
+    bool permissionGranted = hasPermission ?? false;
+
+    if (!permissionGranted) {
+      print('Permission not granted, requesting...');
+      await _requestPermission();
+
+      hasPermission = await _speech.hasPermission;
+      permissionGranted = hasPermission ?? false;
+
+      if (!permissionGranted) {
+        print('Permission still not granted after request');
+        return;
+      }
+    }
+
+    try {
+      setState(() {
+        _isListening = true;
+        _recognizedText = 'Listening...';
+        _permissionGranted = permissionGranted;
+      });
+
+      print('Starting speech recognition...');
+
+      _cleanupSpeechTimeout();
+      _speechTimeoutTimer = Timer(Duration(seconds: 30), () {
+        if (_isListening) {
+          print('Speech timeout reached, stopping...');
+          _stopListening();
+        }
+      });
+
+      bool success = await _speech.listen(
+        onResult: (result) {
+          print(
+            'Speech result: ${result.recognizedWords} (final: ${result.finalResult})',
+          );
+          setState(() {
+            if (result.recognizedWords.isNotEmpty) {
+              _recognizedText = result.recognizedWords;
+            }
+          });
+
+          if (result.finalResult) {
+            print('Final result received, stopping...');
+            _stopListening();
+          } else {
+            _speechTimeoutTimer?.cancel();
+            _speechTimeoutTimer = Timer(Duration(seconds: 30), () {
+              if (_isListening) {
+                print('Speech timeout reached, stopping...');
+                _stopListening();
+              }
+            });
+          }
+        },
+        listenOptions: stt.SpeechListenOptions(partialResults: true),
+      );
+
+      if (!success) {
+        print('Failed to start listening');
+        _cleanupSpeechTimeout();
+        setState(() {
+          _isListening = false;
+          _recognizedText = 'Failed to start listening';
+        });
+      }
+    } catch (e) {
+      print('Error starting speech recognition: $e');
+      _cleanupSpeechTimeout();
+      setState(() {
+        _isListening = false;
+        _recognizedText = 'Error: $e';
+      });
+    }
+  }
+
+  Future<void> _stopListening() async {
+    if (!_isListening) return;
+
+    try {
+      print('Stopping speech recognition...');
+      await _speech.stop();
+      _handleSpeechStopped();
+    } catch (e) {
+      print('Error stopping speech recognition: $e');
+      _cleanupSpeechTimeout();
+      setState(() {
+        _isListening = false;
+        _recognizedText = '';
+      });
+    }
   }
 
   Future<void> _initTTS() async {
@@ -211,136 +474,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _sendMessage(ChatMessage message) async {
-    if (_isLoading) return;
-
-    setState(() {
-      _showWelcomeMessage = false;
-      _isLoading = true;
-      _messages.insert(0, message);
-    });
-
-    await _saveChatHistory();
-
-    final String apiUrl =
-        'https://generativelanguage.googleapis.com/v1beta/models/$_modelId:generateContent?key=$_apiKey';
-
-    try {
-      List<Map<String, dynamic>> conversationHistory = [];
-
-      List<ChatMessage> messagesForHistory = [];
-
-      for (int i = _messages.length - 1; i >= 1; i--) {
-        messagesForHistory.add(_messages[i]);
-      }
-
-      messagesForHistory.add(message);
-
-      for (final msg in messagesForHistory) {
-        conversationHistory.add({
-          "role": msg.user.id == _currentUser.id ? "user" : "model",
-          "parts": [
-            {"text": msg.text},
-          ],
-        });
-      }
-
-      if (conversationHistory.length > 20) {
-        conversationHistory = conversationHistory.sublist(
-          conversationHistory.length - 20,
-        );
-      }
-
-      print('Sending ${conversationHistory.length} messages to API');
-      for (int i = 0; i < conversationHistory.length; i++) {
-        print(
-          'Message $i: ${conversationHistory[i]['role']} - ${conversationHistory[i]['parts'][0]['text']}',
-        );
-      }
-
-      final response = await post(
-        Uri.parse(apiUrl),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          "contents": conversationHistory,
-          "system_instruction": {
-            "parts": [
-              {
-                "text":
-                    "You are EchoMind, a helpful assistant for a mobile chat application. Keep your responses concise and friendly. Remember the conversation history and provide relevant responses based on previous messages. Maintain context from the entire conversation.",
-              },
-            ],
-          },
-          "generationConfig": {"maxOutputTokens": 1000, "temperature": 0.7},
-        }),
-      );
-
-      final responseBody = jsonDecode(response.body);
-
-      if (response.statusCode == 200) {
-        if (responseBody['candidates'] != null &&
-            responseBody['candidates'].isNotEmpty &&
-            responseBody['candidates'][0]['content'] != null &&
-            responseBody['candidates'][0]['content']['parts'] != null &&
-            responseBody['candidates'][0]['content']['parts'].isNotEmpty) {
-          final generatedText =
-              responseBody['candidates'][0]['content']['parts'][0]['text'];
-
-          final responseMessage = ChatMessage(
-            text: generatedText.trim(),
-            user: _echoMind,
-            createdAt: DateTime.now(),
-          );
-
-          setState(() {
-            _messages.insert(0, responseMessage);
-            _isLoading = false;
-          });
-
-          await _saveChatHistory();
-
-          if (_ttsEnabled) {
-            _speakMessage(generatedText.trim());
-          }
-        } else {
-          throw Exception('Invalid API response format');
-        }
-      } else {
-        final errorMessage =
-            responseBody['error']['message'] ??
-            'Unknown API Error (Status: ${response.statusCode})';
-
-        final errorResponse = ChatMessage(
-          text: 'Error: $errorMessage',
-          user: _echoMind,
-          createdAt: DateTime.now(),
-        );
-
-        setState(() {
-          _messages.insert(0, errorResponse);
-          _isLoading = false;
-        });
-
-        await _saveChatHistory();
-      }
-    } catch (e) {
-      print('API Error: $e');
-
-      final errorResponse = ChatMessage(
-        text: 'Sorry, I encountered an error. Please try again.',
-        user: _echoMind,
-        createdAt: DateTime.now(),
-      );
-
-      setState(() {
-        _messages.insert(0, errorResponse);
-        _isLoading = false;
-      });
-
-      await _saveChatHistory();
-    }
-  }
-
   Future<void> _sendMessageWithContext(ChatMessage message) async {
     if (_isLoading) return;
 
@@ -458,6 +591,34 @@ class _ChatScreenState extends State<ChatScreen> {
         backgroundColor: Colors.lightBlue,
         foregroundColor: Colors.white,
         actions: [
+          Stack(
+            children: [
+              IconButton(
+                icon: Icon(
+                  _speechEnabled ? Icons.mic : Icons.mic_off,
+                  color: _speechEnabled
+                      ? (_isListening ? Colors.orange : Colors.white)
+                      : Colors.white70,
+                ),
+                onPressed: _toggleSpeech,
+                tooltip: _speechEnabled ? 'Disable Speech' : 'Enable Speech',
+              ),
+              if (_isListening)
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+
           IconButton(
             icon: Icon(
               _ttsEnabled ? Icons.volume_up : Icons.volume_off,
@@ -473,6 +634,7 @@ class _ChatScreenState extends State<ChatScreen> {
               onPressed: _stopSpeaking,
               tooltip: 'Stop Speaking',
             ),
+
           if (_messages.isNotEmpty)
             PopupMenuButton<String>(
               icon: const Icon(Icons.more_vert),
@@ -481,9 +643,26 @@ class _ChatScreenState extends State<ChatScreen> {
                   _clearChatHistory();
                 } else if (value == 'tts_settings') {
                   _toggleTTS();
+                } else if (value == 'speech_settings') {
+                  _toggleSpeech();
+                } else if (value == 'request_permission') {
+                  _requestPermission();
                 }
               },
               itemBuilder: (BuildContext context) => [
+                PopupMenuItem<String>(
+                  value: 'speech_settings',
+                  child: Row(
+                    children: [
+                      Icon(
+                        _speechEnabled ? Icons.mic : Icons.mic_off,
+                        color: _speechEnabled ? Colors.green : Colors.grey,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(_speechEnabled ? 'Disable Speech' : 'Enable Speech'),
+                    ],
+                  ),
+                ),
                 PopupMenuItem<String>(
                   value: 'tts_settings',
                   child: Row(
@@ -497,6 +676,17 @@ class _ChatScreenState extends State<ChatScreen> {
                     ],
                   ),
                 ),
+                if (!_permissionGranted)
+                  PopupMenuItem<String>(
+                    value: 'request_permission',
+                    child: Row(
+                      children: [
+                        Icon(Icons.mic, color: Colors.orange),
+                        const SizedBox(width: 8),
+                        Text('Request Microphone Permission'),
+                      ],
+                    ),
+                  ),
                 const PopupMenuItem<String>(
                   value: 'clear',
                   child: Row(
@@ -521,6 +711,80 @@ class _ChatScreenState extends State<ChatScreen> {
                   valueColor: AlwaysStoppedAnimation<Color>(Colors.lightBlue),
                   minHeight: 2,
                 ),
+
+              if (_isListening)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  color: Colors.orange.withAlpha(50),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.mic, color: Colors.orange),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Listening...',
+                            style: TextStyle(
+                              color: Colors.orange[800],
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Spacer(),
+                          IconButton(
+                            icon: Icon(Icons.stop, color: Colors.orange),
+                            onPressed: _stopListening,
+                            tooltip: 'Stop Listening',
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      if (_recognizedText.isNotEmpty &&
+                          _recognizedText != 'Listening...')
+                        Text(
+                          _recognizedText,
+                          style: TextStyle(
+                            color: Colors.orange[800],
+                            fontSize: 16,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+
+              if (!_permissionGranted && _speechEnabled)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  color: Colors.red.withAlpha(25),
+                  child: Row(
+                    children: [
+                      Icon(Icons.warning, color: Colors.red),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Microphone permission required for voice input',
+                          style: TextStyle(
+                            color: Colors.red[800],
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: _requestPermission,
+                        child: Text(
+                          'GRANT',
+                          style: TextStyle(
+                            color: Colors.red[800],
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
               Expanded(
                 child: DashChat(
                   currentUser: _currentUser,
@@ -537,11 +801,32 @@ class _ChatScreenState extends State<ChatScreen> {
                   inputOptions: InputOptions(
                     inputTextStyle: const TextStyle(fontSize: 16),
                     inputDecoration: InputDecoration(
-                      hintText: 'Write here...',
+                      hintText: 'Type a message...',
                       border: InputBorder.none,
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 16,
                       ),
+                      suffixIcon: _speechEnabled && _permissionGranted
+                          ? IconButton(
+                              icon: Icon(
+                                _isListening ? Icons.mic_off : Icons.mic,
+                                color: _isListening
+                                    ? Colors.red
+                                    : Colors.lightBlue,
+                                size: 28,
+                              ),
+                              onPressed: _isListening
+                                  ? _stopListening
+                                  : _startListening,
+                              tooltip: _isListening
+                                  ? 'Stop Listening'
+                                  : 'Start Voice Input',
+                            )
+                          : IconButton(
+                              icon: Icon(Icons.mic_off, color: Colors.grey),
+                              onPressed: _requestPermission,
+                              tooltip: 'Microphone permission required',
+                            ),
                     ),
                     sendOnEnter: true,
                     sendButtonBuilder: (Function onSend) {
@@ -607,8 +892,19 @@ class _ChatScreenState extends State<ChatScreen> {
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 20),
-                      // TTS status indicator in welcome screen
-                      Row(mainAxisAlignment: MainAxisAlignment.center),
+                      if (_speechAvailable &&
+                          _speechEnabled &&
+                          _permissionGranted)
+                        if (!_permissionGranted && _speechEnabled)
+                          ElevatedButton.icon(
+                            onPressed: _requestPermission,
+                            icon: Icon(Icons.mic),
+                            label: Text('Grant Microphone Permission'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.orange,
+                              foregroundColor: Colors.white,
+                            ),
+                          ),
                     ],
                   ),
                 ),
@@ -622,6 +918,8 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     flutterTts.stop();
+    _speech.stop();
+    _cleanupSpeechTimeout();
     super.dispose();
   }
 }
