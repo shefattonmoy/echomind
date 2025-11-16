@@ -29,7 +29,6 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _showWelcomeMessage = true;
   bool _isLoading = false;
   
-  // New variables for multiple chat sessions
   final String _chatSessionsKey = 'chat_sessions';
   final String _currentChatIdKey = 'current_chat_id';
   List<Map<String, dynamic>> _chatSessions = [];
@@ -60,12 +59,10 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  // Generate a unique ID for new chat sessions
   String _generateChatId() {
     return DateTime.now().millisecondsSinceEpoch.toString();
   }
 
-  // Generate title from first user message
   String _generateChatTitle(String firstMessage) {
     if (firstMessage.length > 30) {
       return '${firstMessage.substring(0, 30)}...';
@@ -73,15 +70,12 @@ class _ChatScreenState extends State<ChatScreen> {
     return firstMessage;
   }
 
-  // Load all chat sessions
   Future<void> _loadChatSessions() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       
-      // Load current chat ID
       final String? currentChatId = prefs.getString(_currentChatIdKey);
       
-      // Load all chat sessions
       final String? sessionsJson = prefs.getString(_chatSessionsKey);
       
       if (sessionsJson != null && sessionsJson.isNotEmpty) {
@@ -91,7 +85,6 @@ class _ChatScreenState extends State<ChatScreen> {
         _chatSessions = [];
       }
 
-      // Set current chat
       if (currentChatId != null && currentChatId.isNotEmpty) {
         final currentSession = _chatSessions.firstWhere(
           (session) => session['id'] == currentChatId,
@@ -107,7 +100,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  // Create a new chat session
   Map<String, dynamic> _createNewChatSession() {
     final newChatId = _generateChatId();
     final newSession = {
@@ -130,7 +122,6 @@ class _ChatScreenState extends State<ChatScreen> {
     return newSession;
   }
 
-  // Set current chat
   void _setCurrentChat(Map<String, dynamic> session) {
     final messages = (session['messages'] as List)
         .map((msgJson) => ChatMessage.fromJson(msgJson))
@@ -144,7 +135,6 @@ class _ChatScreenState extends State<ChatScreen> {
     _saveCurrentChatId();
   }
 
-  // Save all chat sessions
   Future<void> _saveChatSessions() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -155,7 +145,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  // Save current chat ID
   Future<void> _saveCurrentChatId() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -165,7 +154,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  // Update current session with new messages
   void _updateCurrentSession(List<ChatMessage> messages, {String? newTitle}) {
     final sessionIndex = _chatSessions.indexWhere(
       (session) => session['id'] == _currentChatId,
@@ -185,7 +173,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  // Switch to a different chat session
   void _switchToChat(String chatId) {
     final session = _chatSessions.firstWhere(
       (session) => session['id'] == chatId,
@@ -196,12 +183,10 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  // Delete a chat session
   void _deleteChat(String chatId) {
     setState(() {
       _chatSessions.removeWhere((session) => session['id'] == chatId);
       
-      // If deleting current chat, switch to most recent or create new
       if (chatId == _currentChatId) {
         if (_chatSessions.isNotEmpty) {
           _setCurrentChat(_chatSessions.first);
@@ -213,14 +198,12 @@ class _ChatScreenState extends State<ChatScreen> {
     _saveChatSessions();
   }
 
-  // Toggle chat list visibility
   void _toggleChatList() {
     setState(() {
       _showChatList = !_showChatList;
     });
   }
 
-  // Clear current chat (not all chats)
   Future<void> _clearCurrentChat() async {
     setState(() {
       _messages.clear();
@@ -477,7 +460,6 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages.insert(0, message);
     });
 
-    // Update title if this is the first message
     String? newTitle;
     if (_messages.length == 1) {
       newTitle = _generateChatTitle(message.text);
@@ -729,7 +711,6 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           Column(
             children: [
-              // Chat Sessions List
               if (_showChatList && _chatSessions.isNotEmpty)
                 Container(
                   height: 200,
