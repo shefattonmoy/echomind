@@ -23,7 +23,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _showWelcomeMessage = true;
   bool _isLoading = false;
   final String _chatHistoryKey = 'chat_history';
-  
+
   FlutterTts flutterTts = FlutterTts();
   bool _ttsEnabled = true;
   bool _isSpeaking = false;
@@ -88,14 +88,14 @@ class _ChatScreenState extends State<ChatScreen> {
       _ttsEnabled = !_ttsEnabled;
     });
     await _saveTtsPreference();
-    
+
     if (_ttsEnabled && _messages.isNotEmpty) {
       final latestMessage = _messages.first;
       if (latestMessage.user.id == _echoMind.id) {
         _speakMessage(latestMessage.text);
       }
     }
-    
+
     if (!_ttsEnabled && _isSpeaking) {
       await flutterTts.stop();
     }
@@ -103,7 +103,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _speakMessage(String text) async {
     if (!_ttsEnabled || text.isEmpty) return;
-    
+
     try {
       await flutterTts.speak(text);
     } catch (e) {
@@ -130,14 +130,14 @@ class _ChatScreenState extends State<ChatScreen> {
       if (chatHistoryJson != null && chatHistoryJson.isNotEmpty) {
         final List<dynamic> messagesJson = jsonDecode(chatHistoryJson);
         final List<ChatMessage> loadedMessages = [];
-        
+
         for (final messageJson in messagesJson) {
           try {
             if (messageJson is Map<String, dynamic>) {
               if (messageJson['text'] != null && messageJson['user'] != null) {
                 final chatMessage = ChatMessage.fromJson(messageJson);
-                
-                if (chatMessage.text.isNotEmpty && 
+
+                if (chatMessage.text.isNotEmpty &&
                     chatMessage.user.id.isNotEmpty) {
                   loadedMessages.add(chatMessage);
                 }
@@ -153,7 +153,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _messages = loadedMessages;
           _showWelcomeMessage = _messages.isEmpty;
         });
-        
+
         print('Loaded ${_messages.length} messages from history');
       } else {
         setState(() {
@@ -181,9 +181,9 @@ class _ChatScreenState extends State<ChatScreen> {
       final List<Map<String, dynamic>> messagesJson = _messages
           .map((message) => message.toJson())
           .toList();
-      
+
       final String encodedHistory = jsonEncode(messagesJson);
-      
+
       final decoded = jsonDecode(encodedHistory) as List;
       if (decoded.length == _messages.length) {
         await prefs.setString(_chatHistoryKey, encodedHistory);
@@ -229,7 +229,7 @@ class _ChatScreenState extends State<ChatScreen> {
       List<Map<String, dynamic>> conversationHistory = [];
 
       List<ChatMessage> messagesForHistory = [];
-      
+
       for (int i = _messages.length - 1; i >= 1; i--) {
         messagesForHistory.add(_messages[i]);
       }
@@ -239,17 +239,23 @@ class _ChatScreenState extends State<ChatScreen> {
       for (final msg in messagesForHistory) {
         conversationHistory.add({
           "role": msg.user.id == _currentUser.id ? "user" : "model",
-          "parts": [{"text": msg.text}],
+          "parts": [
+            {"text": msg.text},
+          ],
         });
       }
 
       if (conversationHistory.length > 20) {
-        conversationHistory = conversationHistory.sublist(conversationHistory.length - 20);
+        conversationHistory = conversationHistory.sublist(
+          conversationHistory.length - 20,
+        );
       }
 
       print('Sending ${conversationHistory.length} messages to API');
       for (int i = 0; i < conversationHistory.length; i++) {
-        print('Message $i: ${conversationHistory[i]['role']} - ${conversationHistory[i]['parts'][0]['text']}');
+        print(
+          'Message $i: ${conversationHistory[i]['role']} - ${conversationHistory[i]['parts'][0]['text']}',
+        );
       }
 
       final response = await post(
@@ -260,26 +266,23 @@ class _ChatScreenState extends State<ChatScreen> {
           "system_instruction": {
             "parts": [
               {
-                "text": "You are EchoMind, a helpful assistant for a mobile chat application. Keep your responses concise and friendly. Remember the conversation history and provide relevant responses based on previous messages. Maintain context from the entire conversation.",
+                "text":
+                    "You are EchoMind, a helpful assistant for a mobile chat application. Keep your responses concise and friendly. Remember the conversation history and provide relevant responses based on previous messages. Maintain context from the entire conversation.",
               },
             ],
           },
-          "generationConfig": {
-            "maxOutputTokens": 1000, 
-            "temperature": 0.7
-          },
+          "generationConfig": {"maxOutputTokens": 1000, "temperature": 0.7},
         }),
       );
 
       final responseBody = jsonDecode(response.body);
 
       if (response.statusCode == 200) {
-        if (responseBody['candidates'] != null && 
+        if (responseBody['candidates'] != null &&
             responseBody['candidates'].isNotEmpty &&
             responseBody['candidates'][0]['content'] != null &&
             responseBody['candidates'][0]['content']['parts'] != null &&
             responseBody['candidates'][0]['content']['parts'].isNotEmpty) {
-          
           final generatedText =
               responseBody['candidates'][0]['content']['parts'][0]['text'];
 
@@ -295,7 +298,7 @@ class _ChatScreenState extends State<ChatScreen> {
           });
 
           await _saveChatHistory();
-          
+
           if (_ttsEnabled) {
             _speakMessage(generatedText.trim());
           }
@@ -304,7 +307,8 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       } else {
         final errorMessage =
-            responseBody['error']['message'] ?? 'Unknown API Error (Status: ${response.statusCode})';
+            responseBody['error']['message'] ??
+            'Unknown API Error (Status: ${response.statusCode})';
 
         final errorResponse = ChatMessage(
           text: 'Error: $errorMessage',
@@ -321,7 +325,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } catch (e) {
       print('API Error: $e');
-      
+
       final errorResponse = ChatMessage(
         text: 'Sorry, I encountered an error. Please try again.',
         user: _echoMind,
@@ -356,7 +360,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
       conversationHistory.add({
         "role": "user",
-        "parts": [{"text": message.text}],
+        "parts": [
+          {"text": message.text},
+        ],
       });
 
       int contextMessages = 0;
@@ -364,7 +370,9 @@ class _ChatScreenState extends State<ChatScreen> {
         final msg = _messages[i];
         conversationHistory.insert(0, {
           "role": msg.user.id == _currentUser.id ? "user" : "model",
-          "parts": [{"text": msg.text}],
+          "parts": [
+            {"text": msg.text},
+          ],
         });
         contextMessages++;
       }
@@ -379,14 +387,12 @@ class _ChatScreenState extends State<ChatScreen> {
           "system_instruction": {
             "parts": [
               {
-                "text": "You are EchoMind, a helpful assistant. Keep responses concise and maintain conversation context. If the user says 'another one' or 'suggest more', continue from the previous topic.",
+                "text":
+                    "You are EchoMind, a helpful assistant. Keep responses concise and maintain conversation context. If the user says 'another one' or 'suggest more', continue from the previous topic.",
               },
             ],
           },
-          "generationConfig": {
-            "maxOutputTokens": 1000, 
-            "temperature": 0.7
-          },
+          "generationConfig": {"maxOutputTokens": 1000, "temperature": 0.7},
         }),
       );
 
@@ -408,13 +414,12 @@ class _ChatScreenState extends State<ChatScreen> {
         });
 
         await _saveChatHistory();
-        
+
         if (_ttsEnabled) {
           _speakMessage(generatedText.trim());
         }
       } else {
-        final errorMessage =
-            responseBody['error']['message'] ?? 'API Error';
+        final errorMessage = responseBody['error']['message'] ?? 'API Error';
 
         final errorResponse = ChatMessage(
           text: 'Error: $errorMessage',
@@ -453,7 +458,6 @@ class _ChatScreenState extends State<ChatScreen> {
         backgroundColor: Colors.lightBlue,
         foregroundColor: Colors.white,
         actions: [
-
           IconButton(
             icon: Icon(
               _ttsEnabled ? Icons.volume_up : Icons.volume_off,
@@ -535,15 +539,17 @@ class _ChatScreenState extends State<ChatScreen> {
                     inputDecoration: InputDecoration(
                       hintText: 'Write here...',
                       border: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                      ),
                     ),
                     sendOnEnter: true,
                     sendButtonBuilder: (Function onSend) {
                       return IconButton(
                         onPressed: _isLoading ? null : () => onSend(),
                         icon: Icon(
-                          Icons.send_sharp, 
-                          color: _isLoading ? Colors.grey : Colors.lightBlue
+                          Icons.send_sharp,
+                          color: _isLoading ? Colors.grey : Colors.lightBlue,
                         ),
                       );
                     },
@@ -566,12 +572,12 @@ class _ChatScreenState extends State<ChatScreen> {
                     messagePadding: const EdgeInsets.all(12),
                     messageDecorationBuilder:
                         (message, previousMessage, nextMessage) {
-                      final isUser = message.user.id == _currentUser.id;
-                      return BoxDecoration(
-                        borderRadius: BorderRadius.circular(20),
-                        color: isUser ? Colors.lightBlue : Colors.grey[300],
-                      );
-                    },
+                          final isUser = message.user.id == _currentUser.id;
+                          return BoxDecoration(
+                            borderRadius: BorderRadius.circular(20),
+                            color: isUser ? Colors.lightBlue : Colors.grey[300],
+                          );
+                        },
                     onLongPressMessage: (ChatMessage message) {
                       if (message.user.id == _echoMind.id) {
                         _speakMessage(message.text);
@@ -602,9 +608,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                       const SizedBox(height: 20),
                       // TTS status indicator in welcome screen
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                      ),
+                      Row(mainAxisAlignment: MainAxisAlignment.center),
                     ],
                   ),
                 ),
@@ -617,7 +621,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
-    // Clean up TTS when the widget is disposed
     flutterTts.stop();
     super.dispose();
   }
