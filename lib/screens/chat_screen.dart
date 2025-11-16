@@ -9,6 +9,7 @@ import 'package:dash_chat_2/dash_chat_2.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
+import 'package:intl/intl.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -27,7 +28,13 @@ class _ChatScreenState extends State<ChatScreen> {
   List<ChatMessage> _messages = <ChatMessage>[];
   bool _showWelcomeMessage = true;
   bool _isLoading = false;
-  final String _chatHistoryKey = 'chat_history';
+  
+  // New variables for multiple chat sessions
+  final String _chatSessionsKey = 'chat_sessions';
+  final String _currentChatIdKey = 'current_chat_id';
+  List<Map<String, dynamic>> _chatSessions = [];
+  String _currentChatId = '';
+  bool _showChatList = false;
 
   FlutterTts flutterTts = FlutterTts();
   bool _ttsEnabled = true;
@@ -45,12 +52,182 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadChatHistory();
-      _initTTS();
       _loadTtsPreference();
-      _initSpeech();
       _loadSpeechPreference();
+      _initTTS();
+      _initSpeech();
+      _loadChatSessions();
     });
+  }
+
+  // Generate a unique ID for new chat sessions
+  String _generateChatId() {
+    return DateTime.now().millisecondsSinceEpoch.toString();
+  }
+
+  // Generate title from first user message
+  String _generateChatTitle(String firstMessage) {
+    if (firstMessage.length > 30) {
+      return '${firstMessage.substring(0, 30)}...';
+    }
+    return firstMessage;
+  }
+
+  // Load all chat sessions
+  Future<void> _loadChatSessions() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      
+      // Load current chat ID
+      final String? currentChatId = prefs.getString(_currentChatIdKey);
+      
+      // Load all chat sessions
+      final String? sessionsJson = prefs.getString(_chatSessionsKey);
+      
+      if (sessionsJson != null && sessionsJson.isNotEmpty) {
+        final List<dynamic> sessionsList = jsonDecode(sessionsJson);
+        _chatSessions = sessionsList.cast<Map<String, dynamic>>();
+      } else {
+        _chatSessions = [];
+      }
+
+      // Set current chat
+      if (currentChatId != null && currentChatId.isNotEmpty) {
+        final currentSession = _chatSessions.firstWhere(
+          (session) => session['id'] == currentChatId,
+          orElse: () => _createNewChatSession(),
+        );
+        _setCurrentChat(currentSession);
+      } else {
+        _createNewChatSession();
+      }
+    } catch (e) {
+      print('Error loading chat sessions: $e');
+      _createNewChatSession();
+    }
+  }
+
+  // Create a new chat session
+  Map<String, dynamic> _createNewChatSession() {
+    final newChatId = _generateChatId();
+    final newSession = {
+      'id': newChatId,
+      'title': 'New Chat',
+      'createdAt': DateTime.now().toIso8601String(),
+      'updatedAt': DateTime.now().toIso8601String(),
+      'messages': [],
+    };
+    
+    setState(() {
+      _currentChatId = newChatId;
+      _chatSessions.insert(0, newSession);
+      _messages = [];
+      _showWelcomeMessage = true;
+    });
+    
+    _saveChatSessions();
+    _saveCurrentChatId();
+    return newSession;
+  }
+
+  // Set current chat
+  void _setCurrentChat(Map<String, dynamic> session) {
+    final messages = (session['messages'] as List)
+        .map((msgJson) => ChatMessage.fromJson(msgJson))
+        .toList();
+    
+    setState(() {
+      _currentChatId = session['id'];
+      _messages = messages;
+      _showWelcomeMessage = messages.isEmpty;
+    });
+    _saveCurrentChatId();
+  }
+
+  // Save all chat sessions
+  Future<void> _saveChatSessions() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final sessionsJson = jsonEncode(_chatSessions);
+      await prefs.setString(_chatSessionsKey, sessionsJson);
+    } catch (e) {
+      print('Error saving chat sessions: $e');
+    }
+  }
+
+  // Save current chat ID
+  Future<void> _saveCurrentChatId() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_currentChatIdKey, _currentChatId);
+    } catch (e) {
+      print('Error saving current chat ID: $e');
+    }
+  }
+
+  // Update current session with new messages
+  void _updateCurrentSession(List<ChatMessage> messages, {String? newTitle}) {
+    final sessionIndex = _chatSessions.indexWhere(
+      (session) => session['id'] == _currentChatId,
+    );
+    
+    if (sessionIndex != -1) {
+      setState(() {
+        _chatSessions[sessionIndex] = {
+          'id': _currentChatId,
+          'title': newTitle ?? _chatSessions[sessionIndex]['title'],
+          'createdAt': _chatSessions[sessionIndex]['createdAt'],
+          'updatedAt': DateTime.now().toIso8601String(),
+          'messages': messages.map((msg) => msg.toJson()).toList(),
+        };
+      });
+      _saveChatSessions();
+    }
+  }
+
+  // Switch to a different chat session
+  void _switchToChat(String chatId) {
+    final session = _chatSessions.firstWhere(
+      (session) => session['id'] == chatId,
+    );
+    _setCurrentChat(session);
+    setState(() {
+      _showChatList = false;
+    });
+  }
+
+  // Delete a chat session
+  void _deleteChat(String chatId) {
+    setState(() {
+      _chatSessions.removeWhere((session) => session['id'] == chatId);
+      
+      // If deleting current chat, switch to most recent or create new
+      if (chatId == _currentChatId) {
+        if (_chatSessions.isNotEmpty) {
+          _setCurrentChat(_chatSessions.first);
+        } else {
+          _createNewChatSession();
+        }
+      }
+    });
+    _saveChatSessions();
+  }
+
+  // Toggle chat list visibility
+  void _toggleChatList() {
+    setState(() {
+      _showChatList = !_showChatList;
+    });
+  }
+
+  // Clear current chat (not all chats)
+  Future<void> _clearCurrentChat() async {
+    setState(() {
+      _messages.clear();
+      _showWelcomeMessage = true;
+      _isLoading = false;
+    });
+    _updateCurrentSession(_messages, newTitle: 'New Chat');
   }
 
   void _initSpeech() async {
@@ -291,91 +468,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _loadChatHistory() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final String? chatHistoryJson = prefs.getString(_chatHistoryKey);
-
-      if (chatHistoryJson != null && chatHistoryJson.isNotEmpty) {
-        final List<dynamic> messagesJson = jsonDecode(chatHistoryJson);
-        final List<ChatMessage> loadedMessages = [];
-
-        for (final messageJson in messagesJson) {
-          try {
-            if (messageJson is Map<String, dynamic>) {
-              if (messageJson['text'] != null && messageJson['user'] != null) {
-                final chatMessage = ChatMessage.fromJson(messageJson);
-
-                if (chatMessage.text.isNotEmpty &&
-                    chatMessage.user.id.isNotEmpty) {
-                  loadedMessages.add(chatMessage);
-                }
-              }
-            }
-          } catch (e) {
-            print('Error parsing message: $e');
-            continue;
-          }
-        }
-
-        setState(() {
-          _messages = loadedMessages;
-          _showWelcomeMessage = _messages.isEmpty;
-        });
-      } else {
-        setState(() {
-          _showWelcomeMessage = true;
-        });
-      }
-    } catch (e) {
-      print('Error loading chat history: $e');
-      setState(() {
-        _messages = [];
-        _showWelcomeMessage = true;
-      });
-    }
-  }
-
-  Future<void> _saveChatHistory() async {
-    try {
-      if (_messages.isEmpty) {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.remove(_chatHistoryKey);
-        return;
-      }
-
-      final prefs = await SharedPreferences.getInstance();
-      final List<Map<String, dynamic>> messagesJson = _messages
-          .map((message) => message.toJson())
-          .toList();
-
-      final String encodedHistory = jsonEncode(messagesJson);
-
-      final decoded = jsonDecode(encodedHistory) as List;
-      if (decoded.length == _messages.length) {
-        await prefs.setString(_chatHistoryKey, encodedHistory);
-      } else {
-        throw Exception('Message count mismatch after encoding');
-      }
-    } catch (e) {
-      print('Error saving chat history: $e');
-    }
-  }
-
-  Future<void> _clearChatHistory() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove(_chatHistoryKey);
-      setState(() {
-        _messages.clear();
-        _showWelcomeMessage = true;
-        _isLoading = false;
-      });
-    } catch (e) {
-      print('Error clearing chat history: $e');
-    }
-  }
-
   Future<void> _sendMessageWithContext(ChatMessage message) async {
     if (_isLoading) return;
 
@@ -385,7 +477,13 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages.insert(0, message);
     });
 
-    await _saveChatHistory();
+    // Update title if this is the first message
+    String? newTitle;
+    if (_messages.length == 1) {
+      newTitle = _generateChatTitle(message.text);
+    }
+
+    _updateCurrentSession(_messages, newTitle: newTitle);
 
     final String apiUrl =
         'https://generativelanguage.googleapis.com/v1beta/models/$_modelId:generateContent?key=$_apiKey';
@@ -421,7 +519,7 @@ class _ChatScreenState extends State<ChatScreen> {
             "parts": [
               {
                 "text":
-                    "You are EchoMind, a helpful assistant. Keep responses concise and maintain conversation context. If the user says 'another one' or 'suggest more', continue from the previous topic.",
+                    "You are EchoMind, a helpful assistant. You will give answer to the user according to the questions, he/she asks you. Keep responses concise and maintain conversation context. If the user says 'another one' or 'suggest more', continue from the previous topic.",
               },
             ],
           },
@@ -446,7 +544,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _isLoading = false;
         });
 
-        await _saveChatHistory();
+        _updateCurrentSession(_messages);
 
         if (_ttsEnabled) {
           _speakMessage(generatedText.trim());
@@ -465,7 +563,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _isLoading = false;
         });
 
-        await _saveChatHistory();
+        _updateCurrentSession(_messages);
       }
     } catch (e) {
       final errorResponse = ChatMessage(
@@ -479,7 +577,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _isLoading = false;
       });
 
-      await _saveChatHistory();
+      _updateCurrentSession(_messages);
     }
   }
 
@@ -487,14 +585,25 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('EchoMind'),
+        title: GestureDetector(
+          onTap: _toggleChatList,
+          child: Row(
+            children: [
+              Text('EchoMind'),
+              Icon(
+                _showChatList ? Icons.arrow_drop_up : Icons.arrow_drop_down,
+                color: Colors.white,
+              ),
+            ],
+          ),
+        ),
         backgroundColor: Colors.lightBlue,
         foregroundColor: Colors.white,
         actions: [
           IconButton(
-            icon: Icon(Icons.info, color: Colors.white),
-            onPressed: () {},
-            tooltip: 'Debug Info',
+            icon: Icon(Icons.add, color: Colors.white),
+            onPressed: _createNewChatSession,
+            tooltip: 'New Chat',
           ),
 
           Stack(
@@ -550,14 +659,26 @@ class _ChatScreenState extends State<ChatScreen> {
               icon: const Icon(Icons.more_vert),
               onSelected: (value) {
                 if (value == 'clear') {
-                  _clearChatHistory();
+                  _clearCurrentChat();
                 } else if (value == 'tts_settings') {
                   _toggleTTS();
                 } else if (value == 'speech_settings') {
                   _toggleSpeech();
+                } else if (value == 'view_chats') {
+                  _toggleChatList();
                 }
               },
               itemBuilder: (BuildContext context) => [
+                PopupMenuItem<String>(
+                  value: 'view_chats',
+                  child: Row(
+                    children: [
+                      Icon(Icons.history, color: Colors.blue),
+                      const SizedBox(width: 8),
+                      Text('Chat History'),
+                    ],
+                  ),
+                ),
                 PopupMenuItem<String>(
                   value: 'speech_settings',
                   child: Row(
@@ -596,7 +717,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     children: [
                       Icon(Icons.delete, color: Colors.red),
                       SizedBox(width: 8),
-                      Text('Clear Chat History'),
+                      Text('Clear Current Chat'),
                     ],
                   ),
                 ),
@@ -608,6 +729,85 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           Column(
             children: [
+              // Chat Sessions List
+              if (_showChatList && _chatSessions.isNotEmpty)
+                Container(
+                  height: 200,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black12,
+                        blurRadius: 4,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Row(
+                          children: [
+                            Text(
+                              'Chat History',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                            Spacer(),
+                            IconButton(
+                              icon: Icon(Icons.close),
+                              onPressed: _toggleChatList,
+                              tooltip: 'Close',
+                            ),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        child: ListView.builder(
+                          itemCount: _chatSessions.length,
+                          itemBuilder: (context, index) {
+                            final session = _chatSessions[index];
+                            final isCurrent = session['id'] == _currentChatId;
+                            final messages = (session['messages'] as List).length;
+                            final updatedAt = DateTime.parse(session['updatedAt']);
+                            
+                            return ListTile(
+                              leading: Icon(Icons.chat),
+                              title: Text(
+                                session['title'],
+                                style: TextStyle(
+                                  fontWeight: isCurrent 
+                                      ? FontWeight.bold 
+                                      : FontWeight.normal,
+                                ),
+                              ),
+                              subtitle: Text(
+                                '$messages messages • ${DateFormat('MMM dd, HH:mm').format(updatedAt)}',
+                              ),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (isCurrent)
+                                    Icon(Icons.check, color: Colors.green),
+                                  IconButton(
+                                    icon: Icon(Icons.delete, color: Colors.red),
+                                    onPressed: () => _deleteChat(session['id']),
+                                    tooltip: 'Delete Chat',
+                                  ),
+                                ],
+                              ),
+                              onTap: () => _switchToChat(session['id']),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
               if (_isLoading)
                 LinearProgressIndicator(
                   backgroundColor: Colors.lightBlue[100],
@@ -783,7 +983,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ],
           ),
 
-          if (_showWelcomeMessage)
+          if (_showWelcomeMessage && !_showChatList)
             IgnorePointer(
               child: Container(
                 color: Colors.transparent,
@@ -801,6 +1001,14 @@ class _ChatScreenState extends State<ChatScreen> {
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 20),
+                      if (_chatSessions.length > 1)
+                        Text(
+                          'You have ${_chatSessions.length - 1} previous chat(s)',
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Colors.grey[600],
+                          ),
+                        ),
                     ],
                   ),
                 ),
