@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 import 'package:http/http.dart';
 import 'package:dash_chat_2/dash_chat_2.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -22,11 +23,103 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _showWelcomeMessage = true;
   bool _isLoading = false;
   final String _chatHistoryKey = 'chat_history';
+  
+  FlutterTts flutterTts = FlutterTts();
+  bool _ttsEnabled = true;
+  bool _isSpeaking = false;
+  final String _ttsEnabledKey = 'tts_enabled';
 
   @override
   void initState() {
     super.initState();
     _loadChatHistory();
+    _initTTS();
+    _loadTtsPreference();
+  }
+
+  Future<void> _initTTS() async {
+    await flutterTts.setLanguage("en-US");
+    await flutterTts.setSpeechRate(0.5);
+    await flutterTts.setPitch(1.0);
+    await flutterTts.setVolume(1.0);
+
+    flutterTts.setStartHandler(() {
+      setState(() {
+        _isSpeaking = true;
+      });
+    });
+
+    flutterTts.setCompletionHandler(() {
+      setState(() {
+        _isSpeaking = false;
+      });
+    });
+
+    flutterTts.setErrorHandler((msg) {
+      setState(() {
+        _isSpeaking = false;
+      });
+      print("TTS Error: $msg");
+    });
+  }
+
+  Future<void> _loadTtsPreference() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      setState(() {
+        _ttsEnabled = prefs.getBool(_ttsEnabledKey) ?? true;
+      });
+    } catch (e) {
+      print('Error loading TTS preference: $e');
+    }
+  }
+
+  Future<void> _saveTtsPreference() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_ttsEnabledKey, _ttsEnabled);
+    } catch (e) {
+      print('Error saving TTS preference: $e');
+    }
+  }
+
+  Future<void> _toggleTTS() async {
+    setState(() {
+      _ttsEnabled = !_ttsEnabled;
+    });
+    await _saveTtsPreference();
+    
+    if (_ttsEnabled && _messages.isNotEmpty) {
+      final latestMessage = _messages.first;
+      if (latestMessage.user.id == _echoMind.id) {
+        _speakMessage(latestMessage.text);
+      }
+    }
+    
+    if (!_ttsEnabled && _isSpeaking) {
+      await flutterTts.stop();
+    }
+  }
+
+  Future<void> _speakMessage(String text) async {
+    if (!_ttsEnabled || text.isEmpty) return;
+    
+    try {
+      await flutterTts.speak(text);
+    } catch (e) {
+      print('TTS Speaking Error: $e');
+    }
+  }
+
+  Future<void> _stopSpeaking() async {
+    try {
+      await flutterTts.stop();
+      setState(() {
+        _isSpeaking = false;
+      });
+    } catch (e) {
+      print('TTS Stop Error: $e');
+    }
   }
 
   Future<void> _loadChatHistory() async {
@@ -202,6 +295,10 @@ class _ChatScreenState extends State<ChatScreen> {
           });
 
           await _saveChatHistory();
+          
+          if (_ttsEnabled) {
+            _speakMessage(generatedText.trim());
+          }
         } else {
           throw Exception('Invalid API response format');
         }
@@ -311,6 +408,10 @@ class _ChatScreenState extends State<ChatScreen> {
         });
 
         await _saveChatHistory();
+        
+        if (_ttsEnabled) {
+          _speakMessage(generatedText.trim());
+        }
       } else {
         final errorMessage =
             responseBody['error']['message'] ?? 'API Error';
@@ -352,15 +453,46 @@ class _ChatScreenState extends State<ChatScreen> {
         backgroundColor: Colors.lightBlue,
         foregroundColor: Colors.white,
         actions: [
+
+          IconButton(
+            icon: Icon(
+              _ttsEnabled ? Icons.volume_up : Icons.volume_off,
+              color: _ttsEnabled ? Colors.white : Colors.white70,
+            ),
+            onPressed: _toggleTTS,
+            tooltip: _ttsEnabled ? 'Disable TTS' : 'Enable TTS',
+          ),
+
+          if (_isSpeaking)
+            IconButton(
+              icon: const Icon(Icons.stop, color: Colors.white),
+              onPressed: _stopSpeaking,
+              tooltip: 'Stop Speaking',
+            ),
           if (_messages.isNotEmpty)
             PopupMenuButton<String>(
               icon: const Icon(Icons.more_vert),
               onSelected: (value) {
                 if (value == 'clear') {
                   _clearChatHistory();
+                } else if (value == 'tts_settings') {
+                  _toggleTTS();
                 }
               },
               itemBuilder: (BuildContext context) => [
+                PopupMenuItem<String>(
+                  value: 'tts_settings',
+                  child: Row(
+                    children: [
+                      Icon(
+                        _ttsEnabled ? Icons.volume_up : Icons.volume_off,
+                        color: _ttsEnabled ? Colors.green : Colors.grey,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(_ttsEnabled ? 'Disable TTS' : 'Enable TTS'),
+                    ],
+                  ),
+                ),
                 const PopupMenuItem<String>(
                   value: 'clear',
                   child: Row(
@@ -389,7 +521,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 child: DashChat(
                   currentUser: _currentUser,
                   onSend: (ChatMessage message) {
-                    _sendMessageWithContext(message); // Use this version for proper context
+                    _sendMessageWithContext(message);
                   },
                   messages: _messages,
                   messageListOptions: MessageListOptions(
@@ -440,6 +572,11 @@ class _ChatScreenState extends State<ChatScreen> {
                         color: isUser ? Colors.lightBlue : Colors.grey[300],
                       );
                     },
+                    onLongPressMessage: (ChatMessage message) {
+                      if (message.user.id == _echoMind.id) {
+                        _speakMessage(message.text);
+                      }
+                    },
                   ),
                 ),
               ),
@@ -464,6 +601,10 @@ class _ChatScreenState extends State<ChatScreen> {
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 20),
+                      // TTS status indicator in welcome screen
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                      ),
                     ],
                   ),
                 ),
@@ -472,5 +613,12 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    // Clean up TTS when the widget is disposed
+    flutterTts.stop();
+    super.dispose();
   }
 }
