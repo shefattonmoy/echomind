@@ -1,3 +1,5 @@
+// ignore_for_file: deprecated_member_use
+
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -59,6 +61,12 @@ class _ChatScreenState extends State<ChatScreen> {
           if (status == 'notListening' && _speechToText.isListening) {
             _stopListening();
           }
+
+          if (status == 'done' || status == 'notListening') {
+            if (_lastWords.trim().isNotEmpty) {
+              _sendSpeechMessage();
+            }
+          }
         },
         onError: (error) {
           print('Speech error: $error');
@@ -81,7 +89,11 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _startListening() async {
-    if (!_speechEnabled || _speechToText.isListening) return;
+    if (!_speechFeatureEnabled ||
+        !_speechEnabled ||
+        _speechToText.isListening) {
+      return;
+    }
 
     try {
       setState(() {
@@ -90,16 +102,26 @@ class _ChatScreenState extends State<ChatScreen> {
 
       bool success = await _speechToText.listen(
         onResult: _onSpeechResult,
-        listenFor: Duration(seconds: 30),
-        pauseFor: Duration(seconds: 3),
+        listenFor: Duration(seconds: 10),
+        pauseFor: Duration(seconds: 2),
         localeId: 'en-US',
+        cancelOnError: true,
+        partialResults: true,
         onSoundLevelChange: (level) {},
       );
 
-      if (!success) {
-        setState(() {});
+      if (success) {
+        setState(() {
+          _speechEnabled = true;
+        });
+      } else {
+        setState(() {
+          _speechEnabled = false;
+        });
+        print('Failed to start listening');
       }
     } catch (e) {
+      print('Error starting listening: $e');
       setState(() {
         _speechEnabled = false;
         _speechAvailable = false;
@@ -125,8 +147,12 @@ class _ChatScreenState extends State<ChatScreen> {
       _lastWords = result.recognizedWords;
     });
 
+    print(
+      'Speech result: ${result.recognizedWords}, final: ${result.finalResult}',
+    );
+
     if (result.finalResult && _lastWords.trim().isNotEmpty) {
-      Future.delayed(Duration(milliseconds: 500), () {
+      Future.delayed(Duration(milliseconds: 300), () {
         if (!_speechToText.isListening) {
           _sendSpeechMessage();
         }
@@ -775,15 +801,6 @@ class _ChatScreenState extends State<ChatScreen> {
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 20),
-                      if (_speechEnabled && _speechFeatureEnabled)
-                        Text(
-                          'Tap the microphone icon to use voice input',
-                          style: TextStyle(
-                            fontSize: 16,
-                            color: Colors.grey[600],
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
                     ],
                   ),
                 ),
