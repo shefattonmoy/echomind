@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:intl/intl.dart';
+import 'package:lottie/lottie.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -28,7 +29,7 @@ class _ChatScreenState extends State<ChatScreen> {
   List<ChatMessage> _messages = <ChatMessage>[];
   bool _showWelcomeMessage = true;
   bool _isLoading = false;
-  
+
   final String _chatSessionsKey = 'chat_sessions';
   final String _currentChatIdKey = 'current_chat_id';
   List<Map<String, dynamic>> _chatSessions = [];
@@ -73,11 +74,11 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _loadChatSessions() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      
+
       final String? currentChatId = prefs.getString(_currentChatIdKey);
-      
+
       final String? sessionsJson = prefs.getString(_chatSessionsKey);
-      
+
       if (sessionsJson != null && sessionsJson.isNotEmpty) {
         final List<dynamic> sessionsList = jsonDecode(sessionsJson);
         _chatSessions = sessionsList.cast<Map<String, dynamic>>();
@@ -109,14 +110,14 @@ class _ChatScreenState extends State<ChatScreen> {
       'updatedAt': DateTime.now().toIso8601String(),
       'messages': [],
     };
-    
+
     setState(() {
       _currentChatId = newChatId;
       _chatSessions.insert(0, newSession);
       _messages = [];
       _showWelcomeMessage = true;
     });
-    
+
     _saveChatSessions();
     _saveCurrentChatId();
     return newSession;
@@ -126,7 +127,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final messages = (session['messages'] as List)
         .map((msgJson) => ChatMessage.fromJson(msgJson))
         .toList();
-    
+
     setState(() {
       _currentChatId = session['id'];
       _messages = messages;
@@ -158,7 +159,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final sessionIndex = _chatSessions.indexWhere(
       (session) => session['id'] == _currentChatId,
     );
-    
+
     if (sessionIndex != -1) {
       setState(() {
         _chatSessions[sessionIndex] = {
@@ -186,7 +187,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _deleteChat(String chatId) {
     setState(() {
       _chatSessions.removeWhere((session) => session['id'] == chatId);
-      
+
       if (chatId == _currentChatId) {
         if (_chatSessions.isNotEmpty) {
           _setCurrentChat(_chatSessions.first);
@@ -711,7 +712,7 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           Column(
             children: [
-              if (_showChatList && _chatSessions.isNotEmpty)
+              if (_showChatList)
                 Container(
                   height: 200,
                   decoration: BoxDecoration(
@@ -747,55 +748,107 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                       ),
                       Expanded(
-                        child: ListView.builder(
-                          itemCount: _chatSessions.length,
-                          itemBuilder: (context, index) {
-                            final session = _chatSessions[index];
-                            final isCurrent = session['id'] == _currentChatId;
-                            final messages = (session['messages'] as List).length;
-                            final updatedAt = DateTime.parse(session['updatedAt']);
-                            
-                            return ListTile(
-                              leading: Icon(Icons.chat),
-                              title: Text(
-                                session['title'],
-                                style: TextStyle(
-                                  fontWeight: isCurrent 
-                                      ? FontWeight.bold 
-                                      : FontWeight.normal,
+                        child: _chatSessions.isEmpty
+                            ? Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Lottie.asset(
+                                      'assets/lottie/empty_chat.json',
+                                      width: 100,
+                                      height: 100,
+                                      errorBuilder:
+                                          (context, error, stackTrace) {
+                                            return Icon(
+                                              Icons.chat,
+                                              size: 50,
+                                              color: Colors.grey,
+                                            );
+                                          },
+                                    ),
+                                    SizedBox(height: 16),
+                                    Text(
+                                      'No chat history yet',
+                                      style: TextStyle(
+                                        color: Colors.grey[600],
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                  ],
                                 ),
+                              )
+                            : ListView.builder(
+                                itemCount: _chatSessions.length,
+                                itemBuilder: (context, index) {
+                                  final session = _chatSessions[index];
+                                  final isCurrent =
+                                      session['id'] == _currentChatId;
+                                  final messages =
+                                      (session['messages'] as List).length;
+                                  final updatedAt = DateTime.parse(
+                                    session['updatedAt'],
+                                  );
+
+                                  return ListTile(
+                                    leading: Icon(Icons.chat),
+                                    title: Text(
+                                      session['title'],
+                                      style: TextStyle(
+                                        fontWeight: isCurrent
+                                            ? FontWeight.bold
+                                            : FontWeight.normal,
+                                      ),
+                                    ),
+                                    subtitle: Text(
+                                      '$messages messages • ${DateFormat('MMM dd, HH:mm').format(updatedAt)}',
+                                    ),
+                                    trailing: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        if (isCurrent)
+                                          Icon(
+                                            Icons.check,
+                                            color: Colors.green,
+                                          ),
+                                        IconButton(
+                                          icon: Icon(
+                                            Icons.delete,
+                                            color: Colors.red,
+                                          ),
+                                          onPressed: () =>
+                                              _deleteChat(session['id']),
+                                          tooltip: 'Delete Chat',
+                                        ),
+                                      ],
+                                    ),
+                                    onTap: () => _switchToChat(session['id']),
+                                  );
+                                },
                               ),
-                              subtitle: Text(
-                                '$messages messages • ${DateFormat('MMM dd, HH:mm').format(updatedAt)}',
-                              ),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  if (isCurrent)
-                                    Icon(Icons.check, color: Colors.green),
-                                  IconButton(
-                                    icon: Icon(Icons.delete, color: Colors.red),
-                                    onPressed: () => _deleteChat(session['id']),
-                                    tooltip: 'Delete Chat',
-                                  ),
-                                ],
-                              ),
-                              onTap: () => _switchToChat(session['id']),
-                            );
-                          },
-                        ),
                       ),
                     ],
                   ),
                 ),
 
+
               if (_isLoading)
-                LinearProgressIndicator(
-                  backgroundColor: Colors.lightBlue[100],
-                  valueColor: const AlwaysStoppedAnimation<Color>(
-                    Colors.lightBlue,
+                Container(
+                  height: 80,
+                  child: Center(
+                    child: Lottie.asset(
+                      'assets/lottie/loading.json',
+                      width: 80,
+                      height: 80,
+                      fit: BoxFit.contain,
+                      errorBuilder: (context, error, stackTrace) {
+                        return CircularProgressIndicator(
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.lightBlue,
+                          ),
+                        );
+                      },
+                    ),
                   ),
-                  minHeight: 2,
                 ),
 
               if (_speechToText.isListening)
@@ -808,8 +861,19 @@ class _ChatScreenState extends State<ChatScreen> {
                     children: [
                       Row(
                         children: [
-                          const Icon(Icons.mic, color: Colors.orange),
-                          const SizedBox(width: 8),
+                          Lottie.asset(
+                            'assets/lottie/voice_wave.json',
+                            width: 40,
+                            height: 40,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Icon(
+                                Icons.mic,
+                                color: Colors.orange,
+                                size: 40,
+                              );
+                            },
+                          ),
+                          SizedBox(width: 8),
                           Text(
                             'Listening... Speak now',
                             style: TextStyle(
@@ -817,7 +881,7 @@ class _ChatScreenState extends State<ChatScreen> {
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                          const Spacer(),
+                          Spacer(),
                           IconButton(
                             icon: const Icon(Icons.stop, color: Colors.orange),
                             onPressed: _stopListening,
@@ -825,7 +889,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 8),
+                      SizedBox(height: 8),
                       if (_lastWords.isNotEmpty)
                         Text(
                           _lastWords,
@@ -834,7 +898,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             fontSize: 16,
                           ),
                         ),
-                      const SizedBox(height: 8),
+                      SizedBox(height: 8),
                       Text(
                         'Tap stop or wait for auto-complete',
                         style: TextStyle(
@@ -853,8 +917,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   color: Colors.red.withAlpha(25),
                   child: Row(
                     children: [
-                      const Icon(Icons.warning, color: Colors.red),
-                      const SizedBox(width: 8),
+                      Icon(Icons.warning, color: Colors.red),
+                      SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           'Speech recognition not available on this device',
@@ -882,13 +946,11 @@ class _ChatScreenState extends State<ChatScreen> {
                         : null,
                   ),
                   inputOptions: InputOptions(
-                    inputTextStyle: const TextStyle(fontSize: 16),
+                    inputTextStyle: TextStyle(fontSize: 16),
                     inputDecoration: InputDecoration(
                       hintText: 'Type a message...',
                       border: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                      ),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 16),
                       suffixIcon: _speechFeatureEnabled && _speechEnabled
                           ? IconButton(
                               icon: Icon(
@@ -909,10 +971,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             )
                           : _speechFeatureEnabled
                           ? IconButton(
-                              icon: const Icon(
-                                Icons.mic_off,
-                                color: Colors.grey,
-                              ),
+                              icon: Icon(Icons.mic_off, color: Colors.grey),
                               onPressed: null,
                               tooltip: 'Speech not available',
                             )
@@ -932,7 +991,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(50),
                     ),
-                    inputToolbarPadding: const EdgeInsets.symmetric(
+                    inputToolbarPadding: EdgeInsets.symmetric(
                       horizontal: 15,
                       vertical: 8,
                     ),
@@ -944,7 +1003,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     containerColor: Colors.grey[300]!,
                     textColor: Colors.black,
                     currentUserTextColor: Colors.white,
-                    messagePadding: const EdgeInsets.all(12),
+                    messagePadding: EdgeInsets.all(12),
                     messageDecorationBuilder:
                         (message, previousMessage, nextMessage) {
                           final isUser = message.user.id == _currentUser.id;
@@ -972,16 +1031,30 @@ class _ChatScreenState extends State<ChatScreen> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
+                      Lottie.asset(
+                        'assets/chatbot.json',
+                        width: 150,
+                        height: 150,
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Icon(
+                            Icons.smart_toy,
+                            color: Colors.lightBlue,
+                            size: 100,
+                          );
+                        },
+                      ),
+                      SizedBox(height: 20),
                       Text(
                         'Hi, there! How may I help you today?',
                         style: TextStyle(
-                          fontSize: 28,
+                          fontSize: 24,
                           fontWeight: FontWeight.bold,
                           color: Colors.grey[700],
                         ),
                         textAlign: TextAlign.center,
                       ),
-                      const SizedBox(height: 20),
+                      SizedBox(height: 20),
                       if (_chatSessions.length > 1)
                         Text(
                           'You have ${_chatSessions.length - 1} previous chat(s)',
