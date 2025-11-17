@@ -41,6 +41,12 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isSpeaking = false;
   final String _ttsEnabledKey = 'tts_enabled';
 
+
+  double _speechRate = 0.5;
+  double _pitch = 1.1;
+  final String _speechRateKey = 'speech_rate';
+  final String _pitchKey = 'voice_pitch';
+
   SpeechToText _speechToText = SpeechToText();
   bool _speechEnabled = false;
   String _lastWords = '';
@@ -54,10 +60,35 @@ class _ChatScreenState extends State<ChatScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadTtsPreference();
       _loadSpeechPreference();
+      _loadVoicePreferences();
       _initTTS();
       _initSpeech();
       _loadChatSessions();
     });
+  }
+
+
+  Future<void> _loadVoicePreferences() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      setState(() {
+        _speechRate = prefs.getDouble(_speechRateKey) ?? 0.5;
+        _pitch = prefs.getDouble(_pitchKey) ?? 1.1;
+      });
+    } catch (e) {
+      print('Error loading voice preferences: $e');
+    }
+  }
+
+
+  Future<void> _saveVoicePreferences() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(_speechRateKey, _speechRate);
+      await prefs.setDouble(_pitchKey, _pitch);
+    } catch (e) {
+      print('Error saving voice preferences: $e');
+    }
   }
 
   String _generateChatId() {
@@ -214,6 +245,185 @@ class _ChatScreenState extends State<ChatScreen> {
     _updateCurrentSession(_messages, newTitle: 'New Chat');
   }
 
+  Future<void> _initTTS() async {
+    try {
+      var voices = await flutterTts.getVoices;
+
+      await flutterTts.setLanguage("en-US");
+
+      if (voices != null) {
+        var femaleVoices = voices
+            .where(
+              (voice) =>
+                  voice['name'].toString().toLowerCase().contains('female') ||
+                  voice['name'].toString().toLowerCase().contains('woman') ||
+                  voice['name'].toString().toLowerCase().contains('samantha') ||
+                  voice['name'].toString().toLowerCase().contains('karen') ||
+                  voice['name'].toString().toLowerCase().contains('victoria') ||
+                  voice['name'].toString().toLowerCase().contains('ava'),
+            )
+            .toList();
+
+        if (femaleVoices.isNotEmpty) {
+          await flutterTts.setVoice({
+            "name": femaleVoices.first['name'],
+            "locale": "en-US",
+          });
+          print("Using female voice: ${femaleVoices.first['name']}");
+        }
+      }
+
+      await flutterTts.setSpeechRate(_speechRate); 
+      await flutterTts.setPitch(_pitch); 
+      await flutterTts.setVolume(1.0);
+
+      await flutterTts.setQueueMode(1);
+      await flutterTts
+          .setIosAudioCategory(IosTextToSpeechAudioCategory.playback, [
+            IosTextToSpeechAudioCategoryOptions.allowBluetooth,
+            IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
+            IosTextToSpeechAudioCategoryOptions.mixWithOthers,
+          ]);
+
+      flutterTts.setStartHandler(() {
+        setState(() {
+          _isSpeaking = true;
+        });
+      });
+
+      flutterTts.setCompletionHandler(() {
+        setState(() {
+          _isSpeaking = false;
+        });
+      });
+
+      flutterTts.setErrorHandler((msg) {
+        setState(() {
+          _isSpeaking = false;
+        });
+        print("TTS Error: $msg");
+      });
+
+      print("TTS initialized with rate: $_speechRate, pitch: $_pitch");
+
+
+      await _optimizeVoiceForPlatform();
+    } catch (e) {
+      print("Error initializing TTS: $e");
+      await flutterTts.setLanguage("en-US");
+      await flutterTts.setSpeechRate(_speechRate);
+      await flutterTts.setPitch(_pitch);
+      await flutterTts.setVolume(1.0);
+    }
+  }
+
+  Future<void> _optimizeVoiceForPlatform() async {
+    try {
+      await flutterTts.setSpeechRate(_speechRate);
+      await flutterTts.setPitch(_pitch);
+      await flutterTts.setVolume(1.0);
+
+      await flutterTts
+          .setIosAudioCategory(IosTextToSpeechAudioCategory.playback, [
+            IosTextToSpeechAudioCategoryOptions.allowBluetooth,
+            IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
+            IosTextToSpeechAudioCategoryOptions.mixWithOthers,
+          ]);
+
+      await flutterTts.setQueueMode(1);
+    } catch (e) {
+      print("Platform-specific voice optimization failed: $e");
+    }
+  }
+
+  Future<void> _adjustSpeechRate(double rate) async {
+    double newRate = rate.clamp(0.3, 1.5);
+    setState(() {
+      _speechRate = newRate;
+    });
+    await flutterTts.setSpeechRate(newRate);
+    await _saveVoicePreferences();
+  }
+
+  Future<void> _adjustPitch(double pitch) async {
+    double newPitch = pitch.clamp(0.5, 2.0);
+    setState(() {
+      _pitch = newPitch;
+    });
+    await flutterTts.setPitch(newPitch);
+    await _saveVoicePreferences();
+  }
+
+  void _showVoiceSettingsDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Voice Settings'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                title: Text('Speech Rate'),
+                subtitle: Slider(
+                  value: _speechRate,
+                  min: 0.3,
+                  max: 1.5,
+                  divisions: 12,
+                  label: _speechRate.toStringAsFixed(1),
+                  onChanged: (value) {
+                    _adjustSpeechRate(value);
+                    Navigator.of(context).pop();
+                    _showVoiceSettingsDialog();
+                  },
+                ),
+                trailing: Text('${_speechRate.toStringAsFixed(1)}'),
+              ),
+              ListTile(
+                title: Text('Voice Pitch'),
+                subtitle: Slider(
+                  value: _pitch,
+                  min: 0.5,
+                  max: 2.0,
+                  divisions: 15,
+                  label: _pitch.toStringAsFixed(1),
+                  onChanged: (value) {
+                    _adjustPitch(value);
+                    Navigator.of(context).pop();
+                    _showVoiceSettingsDialog();
+                  },
+                ),
+                trailing: Text('${_pitch.toStringAsFixed(1)}'),
+              ),
+              SizedBox(height: 10),
+              Text(
+                '• Higher rate = faster speech\n• Higher pitch = more feminine',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: Text('Close'),
+            ),
+            TextButton(
+              onPressed: () {
+                _adjustSpeechRate(0.8);
+                _adjustPitch(1.1);
+                Navigator.of(context).pop();
+              },
+              child: Text('Reset to Default'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   void _initSpeech() async {
     try {
       _speechEnabled = await _speechToText.initialize(
@@ -365,32 +575,6 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!_speechFeatureEnabled && _speechToText.isListening) {
       _stopListening();
     }
-  }
-
-  Future<void> _initTTS() async {
-    await flutterTts.setLanguage("en-US");
-    await flutterTts.setSpeechRate(0.5);
-    await flutterTts.setPitch(1.0);
-    await flutterTts.setVolume(1.0);
-
-    flutterTts.setStartHandler(() {
-      setState(() {
-        _isSpeaking = true;
-      });
-    });
-
-    flutterTts.setCompletionHandler(() {
-      setState(() {
-        _isSpeaking = false;
-      });
-    });
-
-    flutterTts.setErrorHandler((msg) {
-      setState(() {
-        _isSpeaking = false;
-      });
-      print("TTS Error: $msg");
-    });
   }
 
   Future<void> _loadTtsPreference() async {
@@ -649,6 +833,12 @@ class _ChatScreenState extends State<ChatScreen> {
                   _toggleSpeech();
                 } else if (value == 'view_chats') {
                   _toggleChatList();
+                } else if (value == 'voice_faster') {
+                  _adjustSpeechRate(_speechRate + 0.1); // Increase speed
+                } else if (value == 'voice_slower') {
+                  _adjustSpeechRate(_speechRate - 0.1); // Decrease speed
+                } else if (value == 'voice_settings') {
+                  _showVoiceSettingsDialog();
                 }
               },
               itemBuilder: (BuildContext context) => [
@@ -659,6 +849,36 @@ class _ChatScreenState extends State<ChatScreen> {
                       Icon(Icons.history, color: Colors.blue),
                       const SizedBox(width: 8),
                       Text('Chat History'),
+                    ],
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'voice_settings',
+                  child: Row(
+                    children: [
+                      Icon(Icons.record_voice_over, color: Colors.purple),
+                      const SizedBox(width: 8),
+                      Text('Voice Settings'),
+                    ],
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'voice_faster',
+                  child: Row(
+                    children: [
+                      Icon(Icons.fast_forward, color: Colors.green),
+                      const SizedBox(width: 8),
+                      Text('Faster Speech'),
+                    ],
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'voice_slower',
+                  child: Row(
+                    children: [
+                      Icon(Icons.fast_rewind, color: Colors.orange),
+                      const SizedBox(width: 8),
+                      Text('Slower Speech'),
                     ],
                   ),
                 ),
@@ -829,7 +1049,6 @@ class _ChatScreenState extends State<ChatScreen> {
                     ],
                   ),
                 ),
-
 
               if (_isLoading)
                 SizedBox(
